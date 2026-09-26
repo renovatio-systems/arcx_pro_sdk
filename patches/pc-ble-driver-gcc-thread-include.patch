@@ -1,0 +1,24 @@
+diff --git a/src/common/transport/serialization_transport.cpp b/src/common/transport/serialization_transport.cpp
+index f916961..246e6d7 100755
+--- a/src/common/transport/serialization_transport.cpp
++++ b/src/common/transport/serialization_transport.cpp
+@@ -35,6 +35,7 @@
+  * SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+  */
+ 
++#include <thread>
+ #include "serialization_transport.h"
+ 
+ #include "ble.h"
+diff --git a/src/common/transport/uart_transport.cpp b/src/common/transport/uart_transport.cpp
+index 1f063ff..336268c 100644
+--- a/src/common/transport/uart_transport.cpp
++++ b/src/common/transport/uart_transport.cpp
+@@ -35,6 +35,7 @@
+  * SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+  */
+ 
++#include <thread>
+ #include "uart_transport.h"
+ 
+ #include "nrf_error.h"
