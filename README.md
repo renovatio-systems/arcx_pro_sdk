@@ -11,9 +11,6 @@ through a Nordic nRF52 dongle, and the bulb is controlled over the local network
 
 Brightness stays between 1% and 100%. Left, right and SOS are ignored.
 
-The project also builds `arcx_ring_client`, which prints the ring's key events, battery level
-and device information and is useful for checking the ring on its own.
-
 The ring is an nRF52-based BLE peripheral. When powered on it advertises as
 `arcx-<4-digit-hex-serial>`, for example `arcx-e24e`.
 
@@ -113,12 +110,3 @@ KL/LB-series bulbs (e.g. KL110, KL125, KL130, LB130). Some newer hardware and fi
 accept only TP-Link's authenticated KLAP protocol and refuse connections on port 9999; those bulbs
 are not supported. Kasa smart plugs and light strips use different commands and are rejected.
 
-### Ring monitor
-
-```sh
-./arcx_ring_client               # connect to the first device named arcx-*
-./arcx_ring_client arcx-e24e     # connect to a specific ring
-./arcx_ring_client -v            # also list nearby advertisers and the GATT table
-```
-
-`arcx_ring_client` takes an optional `-p <port>`; it auto-detects the dongle by default.

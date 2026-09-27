@@ -8,7 +8,7 @@
  *   Forward  brightness up   (turns the bulb on if it is off)
  *   Backward brightness down (ignored while the bulb is off)
  *
- * Ring GATT (see arcx_ring_client.c / README):
+ * Ring GATT (see README):
  *   Custom service         00001666-1212-efde-1523-785feabcd124
  *     Extended Key Event   00001669-...  (notify, ArcxRingState in byte 0)
  *   Battery service 0x180F / Battery Level 0x2A19 (notify)
