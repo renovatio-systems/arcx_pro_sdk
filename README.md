@@ -1,7 +1,18 @@
-# arcx ring BLE client
+# arcx ring Kasa bulb controller
 
-C client that connects to an arcx ring through a Nordic nRF52 dongle and prints its key
-events, battery level and device information.
+`arcx_kasa_ctrl` controls a TP-Link Kasa smart bulb with an arcx ring. The ring connects
+through a Nordic nRF52 dongle, and the bulb is controlled over the local network.
+
+| Ring button | Action |
+|---|---|
+| Center | Turn the bulb on or off |
+| Forward | Brightness up by one step (turns the bulb on if it is off) |
+| Backward | Brightness down by one step (ignored while the bulb is off) |
+
+Brightness stays between 1% and 100%. Left, right and SOS are ignored.
+
+The project also builds `arcx_ring_client`, which prints the ring's key events, battery level
+and device information and is useful for checking the ring on its own.
 
 The ring is an nRF52-based BLE peripheral. When powered on it advertises as
 `arcx-<4-digit-hex-serial>`, for example `arcx-e24e`.
@@ -50,7 +61,7 @@ Requirements: Linux, `gcc`/`g++`, `cmake`, `git`, `libudev-dev`.
 
 ```sh
 git clone --recurse-submodules <repo-url>
-cd arcx_pro_sdk
+cd arcx_kasa_ctrl
 make
 ```
 
@@ -64,25 +75,50 @@ Plug in an nRF52 dongle flashed with Nordic's connectivity firmware
 (it shows up as "nRF52 Connectivity"), then run:
 
 ```sh
+./arcx_kasa_ctrl <serial_port> <ring_name> <bulb_ip>
+./arcx_kasa_ctrl /dev/ttyACM0 arcx-e24e 192.168.1.50
+```
+
+| Argument / option | Description |
+|---|---|
+| `serial_port` | Serial port of the dongle, e.g. `/dev/ttyACM0` |
+| `ring_name` | Advertised name of the ring, or a prefix of it, e.g. `arcx-e24e` |
+| `bulb_ip` | IP address (or host name) of the Kasa bulb |
+| `-s <percent>` | Brightness step per press (default `10`) |
+| `-t <ms>` | Fade time for each change (default `0`) |
+| `-b <baud>` | Baud rate (default `1000000`) |
+| `-v`, `-vv` | Verbose output: key events, advertisers and the GATT table; `-vv` adds the driver packet trace |
+
+The program first reads the bulb's state and exits if the bulb can't be reached. It then scans
+for the ring and connects to it. Example output:
+
+```
+[20:31:00.402] BULB   Desk lamp (KL130(UK)) at 192.168.1.50 is off, brightness 40%
+[20:31:01.911] READY  Center: on/off, forward: brighter, backward: dimmer (Ctrl-C to quit)
+[20:31:02.290] BULB   Desk lamp on, brightness 40%
+[20:31:03.018] BULB   Desk lamp on, brightness 50%
+```
+
+The bulb's state is read before every change, so changes made in the Kasa app are picked up.
+If several presses arrive while a change is still in progress, they are combined into one.
+Press Ctrl-C to disconnect and exit. If the ring disconnects, the program scans and reconnects
+automatically.
+
+### Kasa protocol
+
+The bulb is controlled with the Kasa local protocol on TCP port 9999: a 4-byte length followed
+by XOR-encrypted JSON. The commands are `system.get_sysinfo` and
+`smartlife.iot.smartbulb.lightingservice.transition_light_state`. This works with the
+KL/LB-series bulbs (e.g. KL110, KL125, KL130, LB130). Some newer hardware and firmware revisions
+accept only TP-Link's authenticated KLAP protocol and refuse connections on port 9999; those bulbs
+are not supported. Kasa smart plugs and light strips use different commands and are rejected.
+
+### Ring monitor
+
+```sh
 ./arcx_ring_client               # connect to the first device named arcx-*
 ./arcx_ring_client arcx-e24e     # connect to a specific ring
 ./arcx_ring_client -v            # also list nearby advertisers and the GATT table
 ```
 
-| Option | Description |
-|---|---|
-| `device_name` | Advertised name, or its prefix, to connect to (default `arcx-`) |
-| `-p <port>` | Serial port of the dongle (auto-detected by default) |
-| `-b <baud>` | Baud rate (default `1000000`) |
-| `-v`, `-vv` | Verbose output; `-vv` adds the driver packet trace |
-
-Example output:
-
-```
-[20:31:02.114] KEY    FORWARD_PRESS     ( 2)    [ext: 02-00-00-00]
-[20:31:02.290] KEY    FORWARD_RELEASE   ( 3)    [ext: 03-00-00-00]
-[20:31:05.410] BATT   Battery level: 100%
-```
-
-Press Ctrl-C to disconnect and exit. If the ring disconnects, the client scans and
-reconnects automatically.
+`arcx_ring_client` takes an optional `-p <port>`; it auto-detects the dongle by default.

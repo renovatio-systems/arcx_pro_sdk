@@ -1,4 +1,5 @@
-# Builds arcx_ring_client against Nordic pc-ble-driver (static).
+# Builds arcx_kasa_ctrl (ring -> Kasa bulb controller) and arcx_ring_client (key event
+# monitor) against Nordic pc-ble-driver (static).
 # SD_API selects the SoftDevice API of the dongle's connectivity firmware (5 or 6; the attached PCA10059 dongle runs API v5).
 
 SD_API       ?= 5
@@ -16,11 +17,14 @@ CFLAGS  += -O2 -Wall -Wextra -std=gnu11 -DNRF_SD_BLE_API=$(SD_API) \
            -I$(DRIVER_DIR)/include/common/sdk_compat
 LDLIBS  += -lstdc++ -lpthread -ludev
 
-TARGET := arcx_ring_client
+TARGETS := arcx_kasa_ctrl arcx_ring_client
 
-all: $(TARGET)
+all: $(TARGETS)
 
-$(TARGET): arcx_ring_client.c $(DRIVER_LIB)
+arcx_kasa_ctrl: arcx_kasa_ctrl.c kasa.c kasa.h $(DRIVER_LIB)
+	$(CC) $(CFLAGS) -o $@ arcx_kasa_ctrl.c kasa.c $(DRIVER_LIB) $(LDLIBS)
+
+arcx_ring_client: arcx_ring_client.c $(DRIVER_LIB)
 	$(CC) $(CFLAGS) -o $@ $< $(DRIVER_LIB) $(LDLIBS)
 
 $(DRIVER_LIB):
@@ -35,7 +39,7 @@ $(DRIVER_LIB):
 	$(MAKE) -C $(DRIVER_BUILD) nrf_ble_driver_sd_api_v$(SD_API)_static
 
 clean:
-	rm -f $(TARGET)
+	rm -f $(TARGETS)
 
 distclean: clean
 	rm -rf build
