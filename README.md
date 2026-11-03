@@ -1,6 +1,6 @@
 # arcx ring Kasa bulb controller
 
-`arcx_kasa_ctrl` controls a TP-Link Kasa smart bulb with an arcx ring. The ring connects
+`arcx_firetv_ctrl` controls a TP-Link Kasa smart bulb with an arcx ring. The ring connects
 through a Nordic nRF52 dongle, and the bulb is controlled over the local network.
 
 | Ring button | Action |
@@ -45,10 +45,10 @@ The first byte of the notification is an `ArcxRingState` value:
 
 | Value | Event | Value | Event |
 |---|---|---|---|
-| 0 | `CENTER_PRESS` | 6 | `LEFT_PRESS` |
-| 1 | `CENTER_RELEASE` | 7 | `LEFT_RELEASE` |
-| 2 | `FORWARD_PRESS` | 8 | `RIGHT_PRESS` |
-| 3 | `FORWARD_RELEASE` | 9 | `RIGHT_RELEASE` |
+| 0 | `CENTER_PRESS` | 6 | `RIGHT_PRESS` |
+| 1 | `CENTER_RELEASE` | 7 | `RIGHT_RELEASE` |
+| 2 | `FORWARD_PRESS` | 8 | `LEFT_PRESS` |
+| 3 | `FORWARD_RELEASE` | 9 | `LEFT_RELEASE` |
 | 4 | `BACKWARD_PRESS` | 10 | `SOS` |
 | 5 | `BACKWARD_RELEASE` | | |
 
@@ -58,7 +58,7 @@ Requirements: Linux, `gcc`/`g++`, `cmake`, `git`, `libudev-dev`.
 
 ```sh
 git clone --recurse-submodules <repo-url>
-cd arcx_kasa_ctrl
+cd arcx_firetv_ctrl
 make
 ```
 
@@ -72,8 +72,8 @@ Plug in an nRF52 dongle flashed with Nordic's connectivity firmware
 (it shows up as "nRF52 Connectivity"), then run:
 
 ```sh
-./arcx_kasa_ctrl <serial_port> <ring_name> <bulb_ip>
-./arcx_kasa_ctrl /dev/ttyACM0 arcx-e24e 192.168.1.50
+./arcx_firetv_ctrl <serial_port> <ring_name> <bulb_ip>
+./arcx_firetv_ctrl /dev/ttyACM0 arcx-e24e 192.168.1.50
 ```
 
 | Argument / option | Description |

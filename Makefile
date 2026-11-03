@@ -1,4 +1,4 @@
-# Builds arcx_kasa_ctrl against Nordic pc-ble-driver (static).
+# Builds arcx_firetv_ctrl against Nordic pc-ble-driver (static).
 # SD_API selects the SoftDevice API of the dongle's connectivity firmware (5 or 6; the attached PCA10059 dongle runs API v5).
 
 SD_API       ?= 5
@@ -16,12 +16,12 @@ CFLAGS  += -O2 -Wall -Wextra -std=gnu11 -DNRF_SD_BLE_API=$(SD_API) \
            -I$(DRIVER_DIR)/include/common/sdk_compat
 LDLIBS  += -lstdc++ -lpthread -ludev
 
-TARGET := arcx_kasa_ctrl
+TARGET := arcx_firetv_ctrl
 
 all: $(TARGET)
 
-$(TARGET): arcx_kasa_ctrl.c kasa.c kasa.h $(DRIVER_LIB)
-	$(CC) $(CFLAGS) -o $@ arcx_kasa_ctrl.c kasa.c $(DRIVER_LIB) $(LDLIBS)
+$(TARGET): arcx_firetv_ctrl.c kasa.c kasa.h firetv.c firetv.h $(DRIVER_LIB)
+	$(CC) $(CFLAGS) -o $@ arcx_firetv_ctrl.c kasa.c firetv.c $(DRIVER_LIB) $(LDLIBS)
 
 $(DRIVER_LIB):
 	@test -f $(DRIVER_DIR)/CMakeLists.txt || git submodule update --init

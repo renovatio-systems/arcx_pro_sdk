@@ -1,7 +1,7 @@
 /*
- * arcx_kasa_ctrl.c
+ * arcx_firetv_ctrl.c
  *
- * Controls a TP-Link Kasa bulb with an ArcX ring. The ring is reached through an
+ * Controls a TP-Link Kasa bulb or an Amazon Fire TV with an ArcX ring. The ring is reached through an
  * nRF52 dongle running Nordic's connectivity firmware, the bulb over the LAN.
  *
  *   Center   toggle the bulb on / off
@@ -18,7 +18,7 @@
  *
  * Built against pc-ble-driver (SoftDevice API v5 or v6, see NRF_SD_BLE_API).
  *
- * Usage: arcx_kasa_ctrl [options] serial_port ring_name bulb_ip
+ * Usage: arcx_firetv_ctrl [options] serial_port ring_name bulb_ip
  *   ring_name is matched as a prefix of the advertised name (case-insensitive).
  */
 
@@ -26,6 +26,7 @@
 #include "ble_hci.h"
 #include "sd_rpc.h"
 
+#include "firetv.h"
 #include "kasa.h"
 
 #include <errno.h>
@@ -77,17 +78,19 @@ typedef enum {
     FORWARD_RELEASE,
     BACKWARD_PRESS,
     BACKWARD_RELEASE,
-    LEFT_PRESS,
-    LEFT_RELEASE,
+    /* Observed on the ring: ids 6/7 are the right button and 8/9 the left button
+     * (the firmware overview document lists them the other way round). */
     RIGHT_PRESS,
     RIGHT_RELEASE,
+    LEFT_PRESS,
+    LEFT_RELEASE,
     SOS
 } ArcxRingState;
 
 static const char *const ARCX_STATE_NAMES[] = {
     "CENTER_PRESS",   "CENTER_RELEASE", "FORWARD_PRESS", "FORWARD_RELEASE",
-    "BACKWARD_PRESS", "BACKWARD_RELEASE", "LEFT_PRESS",  "LEFT_RELEASE",
-    "RIGHT_PRESS",    "RIGHT_RELEASE",  "SOS"};
+    "BACKWARD_PRESS", "BACKWARD_RELEASE", "RIGHT_PRESS", "RIGHT_RELEASE",
+    "LEFT_PRESS",     "LEFT_RELEASE",   "SOS"};
 
 /* ---------------------------------------------------------------------------
  * State
@@ -128,6 +131,13 @@ static pthread_mutex_t m_press_lock    = PTHREAD_MUTEX_INITIALIZER;
 static pthread_cond_t  m_press_cond    = PTHREAD_COND_INITIALIZER;
 static int             m_press_toggles;
 static int             m_press_steps; /* +1 per up press, -1 per down press */
+
+/* Fire TV mode (-f): key actions queued by the BLE thread for the main thread. */
+static const char *m_firetv_host;
+static char        m_firetv_token[128];
+#define FTV_QUEUE 16
+static const char *m_ftv_queue[FTV_QUEUE];
+static int         m_ftv_head, m_ftv_tail;
 
 static uint8_t  m_vs_uuid_type;
 static uint16_t m_conn_handle = BLE_CONN_HANDLE_INVALID;
@@ -232,6 +242,45 @@ static void press_queue(int toggles, int steps)
     m_press_steps += steps;
     pthread_cond_signal(&m_press_cond);
     pthread_mutex_unlock(&m_press_lock);
+}
+
+/* Driver thread: queue a Fire TV key action (a string literal). */
+static void firetv_queue(const char *action)
+{
+    pthread_mutex_lock(&m_press_lock);
+    if ((m_ftv_tail + 1) % FTV_QUEUE != m_ftv_head)
+    {
+        m_ftv_queue[m_ftv_tail] = action;
+        m_ftv_tail = (m_ftv_tail + 1) % FTV_QUEUE;
+    }
+    pthread_cond_signal(&m_press_cond);
+    pthread_mutex_unlock(&m_press_lock);
+}
+
+/* Main thread: waits up to 100 ms for a Fire TV action. */
+static const char *firetv_take(void)
+{
+    struct timespec deadline;
+    const char     *action = NULL;
+
+    clock_gettime(CLOCK_REALTIME, &deadline);
+    deadline.tv_nsec += 100 * 1000 * 1000;
+    if (deadline.tv_nsec >= 1000000000L)
+    {
+        deadline.tv_sec++;
+        deadline.tv_nsec -= 1000000000L;
+    }
+    pthread_mutex_lock(&m_press_lock);
+    while (m_ftv_head == m_ftv_tail && !m_quit)
+        if (pthread_cond_timedwait(&m_press_cond, &m_press_lock, &deadline) == ETIMEDOUT)
+            break;
+    if (m_ftv_head != m_ftv_tail)
+    {
+        action     = m_ftv_queue[m_ftv_head];
+        m_ftv_head = (m_ftv_head + 1) % FTV_QUEUE;
+    }
+    pthread_mutex_unlock(&m_press_lock);
+    return action;
 }
 
 /* Main thread: waits up to 100 ms for presses. Presses made while the bulb was busy
@@ -716,6 +765,21 @@ static void on_key_event(const uint8_t *data, uint16_t len)
     if (m_verbose)
         log_ts("KEY", "%-17s (%2u)    [%s]", ARCX_STATE_NAMES[data[0]], data[0], raw);
 
+    if (m_firetv_host)
+    {
+        switch (data[0])
+        {
+            case CENTER_PRESS:   firetv_queue("select");     break;
+            case FORWARD_PRESS:  firetv_queue("dpad_up");    break;
+            case BACKWARD_PRESS: firetv_queue("dpad_down");  break;
+            case LEFT_PRESS:     firetv_queue("dpad_left");  break;
+            case RIGHT_PRESS:    firetv_queue("dpad_right"); break;
+            case SOS:            firetv_queue("home");       break;
+            default: break;
+        }
+        return;
+    }
+
     /* Act on presses; releases and the other buttons are ignored. */
     switch (data[0])
     {
@@ -1015,10 +1079,49 @@ static void on_signal(int sig)
     m_quit = 1;
 }
 
+/* Interactive pairing: the TV shows a PIN, the token is stored for later runs. */
+static int firetv_pair(const char *host)
+{
+    char err[200], pin[16], token[128];
+
+    firetv_wake(host, err, sizeof(err)); /* best effort; the port may already be open */
+    /* The service can take a few seconds to start listening after the wake request. */
+    int rc = -1;
+    for (int i = 0; i < 8 && rc != 0; i++)
+    {
+        usleep(1000 * 1000);
+        rc = firetv_pin_display(host, "arcx ring", err, sizeof(err));
+    }
+    if (rc != 0)
+    {
+        fprintf(stderr, "Could not start pairing: %s\n", err);
+        return 1;
+    }
+    printf("Enter the PIN shown on the TV: ");
+    fflush(stdout);
+    if (!fgets(pin, sizeof(pin), stdin))
+        return 1;
+    pin[strcspn(pin, "\r\n")] = '\0';
+    if (firetv_pin_verify(host, pin, token, sizeof(token), err, sizeof(err)) != 0)
+    {
+        fprintf(stderr, "Pairing failed: %s\n", err);
+        return 1;
+    }
+    if (firetv_token_save(host, token) != 0)
+    {
+        fprintf(stderr, "Could not save the token\n");
+        return 1;
+    }
+    printf("Paired. Token saved to ~/.config/arcx/firetv_%s.token\n", host);
+    return 0;
+}
+
 static void usage(const char *prog)
 {
     fprintf(stderr,
             "Usage: %s [-b baud] [-s step] [-t ms] [-v] serial_port ring_name bulb_ip\n"
+            "       %s [-b baud] [-v] -f firetv_ip serial_port ring_name   (control a Fire TV)\n"
+            "       %s -P firetv_ip                                        (pair with a Fire TV)\n"
             "  serial_port  serial port of the nRF52 connectivity dongle, e.g. /dev/ttyACM0\n"
             "  ring_name    advertised name of the ring, or a prefix of it, e.g. arcx-e24e\n"
             "  bulb_ip      IP address (or host name) of the Kasa bulb\n"
@@ -1026,8 +1129,9 @@ static void usage(const char *prog)
             "  -s  brightness step per press in percent (default %d)\n"
             "  -t  fade time in ms for each change (default %d)\n"
             "  -v  verbose output (key events, advertisers, GATT table); -vv adds driver trace\n"
-            "Ring buttons: center toggles the bulb, forward/backward raise/lower brightness.\n",
-            prog, DEFAULT_BAUD_RATE, DEFAULT_STEP, DEFAULT_TRANSITION_MS);
+            "Ring buttons: center toggles the bulb, forward/backward raise/lower brightness.\n"
+            "Fire TV mode: center=select, forward/backward/left/right=d-pad, SOS=home.\n",
+            prog, prog, prog, DEFAULT_BAUD_RATE, DEFAULT_STEP, DEFAULT_TRANSITION_MS);
 }
 
 int main(int argc, char *argv[])
@@ -1038,28 +1142,44 @@ int main(int argc, char *argv[])
     kasa_state_t st;
     int          opt, toggles, steps;
 
-    while ((opt = getopt(argc, argv, "b:s:t:vh")) != -1)
+    while ((opt = getopt(argc, argv, "b:s:t:f:P:vh")) != -1)
     {
         switch (opt)
         {
             case 'b': baud = (uint32_t)strtoul(optarg, NULL, 10); break;
             case 's': m_step = atoi(optarg); break;
             case 't': m_transition_ms = atoi(optarg); break;
+            case 'f': m_firetv_host = optarg; break;
+            case 'P': return firetv_pair(optarg);
             case 'v': m_trace = m_verbose; m_verbose = true; break;
             default: usage(argv[0]); return 1;
         }
     }
-    if (argc - optind != 3 || m_step < 1 || m_step > 100 || m_transition_ms < 0)
+    if (argc - optind != (m_firetv_host ? 2 : 3) || m_step < 1 || m_step > 100 || m_transition_ms < 0)
     {
         usage(argv[0]);
         return 1;
     }
     m_name_prefix = argv[optind + 1];
-    m_bulb_host   = argv[optind + 2];
+    m_bulb_host   = m_firetv_host ? NULL : argv[optind + 2];
 
     signal(SIGINT, on_signal);
     signal(SIGTERM, on_signal);
 
+    if (m_firetv_host)
+    {
+        if (firetv_token_load(m_firetv_host, m_firetv_token, sizeof(m_firetv_token)) != 0)
+        {
+            log_ts("ERROR", "No token for %s; pair first: %s -P %s", m_firetv_host, argv[0],
+                   m_firetv_host);
+            return 1;
+        }
+        if (firetv_wake(m_firetv_host, err, sizeof(err)) != 0)
+            log_ts("FIRETV", "Warning: wake failed: %s", err);
+        log_ts("FIRETV", "Controlling Fire TV at %s", m_firetv_host);
+    }
+    else
+    {
     /* Check the bulb first so a wrong address fails fast. */
     if (kasa_get_state(m_bulb_host, &st, err, sizeof(err)) != 0)
     {
@@ -1068,6 +1188,7 @@ int main(int argc, char *argv[])
     }
     log_ts("BULB", "%s (%s) at %s is %s, brightness %d%%%s", st.alias, st.model, m_bulb_host,
            st.on ? "on" : "off", st.brightness, st.dimmable ? "" : " (not dimmable)");
+    }
 
     resolve_port(argv[optind], port, sizeof(port));
     log_ts("INIT", "Port %s @ %u baud, SoftDevice API v%d", port, baud, NRF_SD_BLE_API);
@@ -1087,8 +1208,28 @@ int main(int argc, char *argv[])
     }
 
     while (!m_quit)
-        if (press_take(&toggles, &steps))
+    {
+        if (m_firetv_host)
+        {
+            const char *action = firetv_take();
+            if (!action)
+                continue;
+            if (firetv_send(m_firetv_host, m_firetv_token, action, err, sizeof(err)) != 0)
+            {
+                /* The remote service may have stopped while the TV idled: wake and retry. */
+                firetv_wake(m_firetv_host, err, sizeof(err));
+                usleep(500 * 1000);
+                if (firetv_send(m_firetv_host, m_firetv_token, action, err, sizeof(err)) != 0)
+                {
+                    log_ts("ERROR", "Fire TV: %s", err);
+                    continue;
+                }
+            }
+            log_ts("FIRETV", "Sent %s", action);
+        }
+        else if (press_take(&toggles, &steps))
             bulb_apply(toggles, steps);
+    }
 
     log_ts("EXIT", "Shutting down");
     if (m_conn_handle != BLE_CONN_HANDLE_INVALID)
